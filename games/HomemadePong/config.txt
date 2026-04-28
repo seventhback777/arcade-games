@@ -48,4 +48,4 @@ repository=https://github.com/studioant/arcade_game
 
 # [Optional] Specific compile command - if you have a specific compile command (eg. 'make', 'skm g++ *.cpp') - Uncomment  if required
 compile-command=skm g++ *.cpp
-# test trigger 3
+# test trigger 4 - full pipeline
