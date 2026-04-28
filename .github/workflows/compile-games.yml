@@ -304,11 +304,13 @@ jobs:
                   path: ./linux-downloads
 
             - uses: actions/download-artifact@v4
+              if: needs.compile-games-arm.result == 'success'
               with:
                   name: arm-programs
                   path: ./arm-downloads
 
             - uses: actions/download-artifact@v4
+              if: needs.compile-dotnet-games-arm.result == 'success'
               with:
                   name: dotnet-arm-programs
                   path: ./arm-downloads
