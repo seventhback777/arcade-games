@@ -32,11 +32,19 @@ jobs:
               env:
                   EVENT_ACTION: ${{ github.event.action }}
                   PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   cd $GITHUB_WORKSPACE
                   if [ "${EVENT_ACTION}" == "closed" ]; then
-                    echo "Merge event - compare base SHA ${PR_BASE_SHA} with HEAD (merge commit)"
-                    declare DIRECTORIES=($(git diff --name-only ${PR_BASE_SHA} HEAD games | awk -F'/' '{print "games/" $2 "/"}' | sort -u))
+                    # Bootstrap detection: if no previous release exists, compile ALL games
+                    PREV_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || echo "")
+                    if [ -z "$PREV_TAG" ]; then
+                      echo "Bootstrap mode: no previous release found, compiling ALL games"
+                      declare DIRECTORIES=($(ls -d games/*/ | sort))
+                    else
+                      echo "Merge event (previous release: $PREV_TAG) - compare base SHA ${PR_BASE_SHA} with HEAD"
+                      declare DIRECTORIES=($(git diff --name-only ${PR_BASE_SHA} HEAD games | awk -F'/' '{print "games/" $2 "/"}' | sort -u))
+                    fi
                   elif [ "${GIT_BASE_REPO}" == "thoth-tech/arcade-games" ]; then
                     git remote add upstream https://github.com/thoth-tech/arcade-games.git
                     git fetch upstream
@@ -292,7 +300,15 @@ jobs:
             needs.compile-games-linux.result == 'success' &&
             (needs.compile-games-arm.result == 'success' || needs.compile-games-arm.result == 'skipped') &&
             (needs.compile-dotnet-games-arm.result == 'success' || needs.compile-dotnet-games-arm.result == 'skipped')
+        env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         steps:
+            - uses: actions/checkout@v4
+              with:
+                  repository: ${{ github.event.pull_request.base.repo.full_name }}
+                  ref: ${{ github.event.pull_request.merge_commit_sha }}
+                  fetch-depth: 1
+
             - uses: actions/download-artifact@v4
               with:
                   name: windows-programs
@@ -315,40 +331,54 @@ jobs:
                   name: dotnet-arm-programs
                   path: ./arm-downloads
 
-            - name: Prepare release assets
+            - name: Prepare release assets (merge fresh + previous)
               run: |
-                  mkdir -p release-assets
-                  read GAME_DIR <<< "${{ needs.get-game-directory.outputs.game-directory }}"
+                  mkdir -p release-assets old-assets
 
-                  declare -A PLATFORM_DIRS=(
+                  # Try to find previous release and download its assets for reuse
+                  PREV_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || echo "")
+                  if [ -n "$PREV_TAG" ]; then
+                    echo "Reusing assets from previous release: $PREV_TAG"
+                    gh release download "$PREV_TAG" -D old-assets/ --pattern '*.tar.gz' || echo "(some/all downloads failed, continuing)"
+                  else
+                    echo "Bootstrap: no previous release found"
+                  fi
+
+                  # Mapping: platform -> fresh-build directory and tar.gz suffix used by compile-game.sh
+                  declare -A FRESH_DIR=(
                     ["linux-x86"]="linux-downloads"
                     ["linux-arm"]="arm-downloads"
                     ["windows"]="windows-downloads"
                   )
+                  declare -A FRESH_SUFFIX=(
+                    ["linux-x86"]="linux-x86"
+                    ["linux-arm"]="linux-arm"
+                    ["windows"]="win-x86"
+                  )
 
-                  for dir in ${GAME_DIR[@]}
-                  do
-                    game_name=$(basename $dir)
+                  # Iterate over ALL games in the repo (not just changed ones)
+                  for game_dir in games/*/; do
+                    game_name=$(basename "$game_dir")
+                    for platform in linux-x86 linux-arm windows; do
+                      fresh_path="${FRESH_DIR[$platform]}/games/${game_name}/published/${game_name}-${FRESH_SUFFIX[$platform]}.tar.gz"
+                      old_path="old-assets/${game_name}__${platform}.tar.gz"
+                      dest="release-assets/${game_name}__${platform}.tar.gz"
 
-                    for platform in "${!PLATFORM_DIRS[@]}"
-                    do
-                      src_dir="${PLATFORM_DIRS[$platform]}/games/${game_name}/published"
-                      if [ -d "$src_dir" ]; then
-                        for file in "$src_dir"/*; do
-                          [ -f "$file" ] || continue
-                          # skip tar.gz archives, only take executables
-                          [[ "$file" == *.tar.gz ]] && continue
-                          filename=$(basename "$file")
-                          dest="release-assets/${game_name}__${platform}__${filename}"
-                          cp "$file" "$dest"
-                          chmod +x "$dest"
-                        done
+                      if [ -f "$fresh_path" ]; then
+                        cp "$fresh_path" "$dest"
+                        echo "FRESH:   $game_name $platform"
+                      elif [ -f "$old_path" ]; then
+                        cp "$old_path" "$dest"
+                        echo "REUSE:   $game_name $platform (from $PREV_TAG)"
+                      else
+                        echo "MISSING: $game_name $platform (no fresh build, no previous asset)"
                       fi
                     done
                   done
 
-                  echo "Release assets prepared:"
-                  ls release-assets/
+                  echo "---"
+                  echo "Final release assets:"
+                  ls -la release-assets/ | tail -n +2
 
             - name: Generate release tag
               id: release-tag
