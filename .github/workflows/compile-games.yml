@@ -7,7 +7,9 @@ on:
 
 jobs:
     get-game-directory:
-        if: "!contains( github.event.pull_request.labels.*.name, 'compiled')"
+        if: |
+            !contains(github.event.pull_request.labels.*.name, 'compiled') &&
+            (github.event.action != 'closed' || github.event.pull_request.merged == true)
         runs-on: ubuntu-latest
         env:
             GAME_DIR:
@@ -21,20 +23,27 @@ jobs:
         steps:
             - uses: actions/checkout@v4
               with:
-                  repository: ${{github.event.pull_request.head.repo.full_name}}
+                  repository: ${{ github.event.action == 'closed' && github.event.pull_request.base.repo.full_name || github.event.pull_request.head.repo.full_name }}
+                  ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.head_ref }}
                   fetch-depth: 0
                   submodules: "recursive"
 
             - id: get-game-directory
+              env:
+                  EVENT_ACTION: ${{ github.event.action }}
+                  PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
               run: |
                   cd $GITHUB_WORKSPACE
-                  if [ "${GIT_BASE_REPO}" == "thoth-tech/arcade-games" ]; then
+                  if [ "${EVENT_ACTION}" == "closed" ]; then
+                    echo "Merge event - compare base SHA ${PR_BASE_SHA} with HEAD (merge commit)"
+                    declare DIRECTORIES=($(git diff --name-only ${PR_BASE_SHA} HEAD games | awk -F'/' '{print "games/" $2 "/"}' | sort -u))
+                  elif [ "${GIT_BASE_REPO}" == "thoth-tech/arcade-games" ]; then
                     git remote add upstream https://github.com/thoth-tech/arcade-games.git
                     git fetch upstream
                     echo "Compare upstream ${GITHUB_BASE_REF} with origin ${GITHUB_HEAD_REF}"
                     declare DIRECTORIES=($(git diff --name-only --merge-base upstream/${GITHUB_BASE_REF} origin/${GITHUB_HEAD_REF} games | awk -F'/' '{print "games/" $2 "/"}' | sort -u))
                   else
-                    echo "Compare origin ${GITHUB_BASE_REF} with origin ${GITHUB_HEAD_REF}"  
+                    echo "Compare origin ${GITHUB_BASE_REF} with origin ${GITHUB_HEAD_REF}"
                     declare DIRECTORIES=($(git diff --name-only --merge-base origin/${GITHUB_BASE_REF} origin/${GITHUB_HEAD_REF} games | awk -F'/' '{print "games/" $2 "/"}' | sort -u))
                   fi
                     GAME_DIR=() 
@@ -78,8 +87,8 @@ jobs:
             - name: Checkout feature branch
               uses: actions/checkout@v4
               with:
-                  repository: ${{github.event.pull_request.head.repo.full_name}}
-                  ref: ${{ github.head_ref }}
+                  repository: ${{ github.event.action == 'closed' && github.event.pull_request.base.repo.full_name || github.event.pull_request.head.repo.full_name }}
+                  ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.head_ref }}
                   fetch-depth: 1
                   submodules: "recursive"
 
@@ -129,8 +138,8 @@ jobs:
             - name: Checkout feature branch
               uses: actions/checkout@v4
               with:
-                  repository: ${{github.event.pull_request.head.repo.full_name}}
-                  ref: ${{ github.head_ref }}
+                  repository: ${{ github.event.action == 'closed' && github.event.pull_request.base.repo.full_name || github.event.pull_request.head.repo.full_name }}
+                  ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.head_ref }}
                   fetch-depth: 1
                   submodules: "recursive"
             - name: Update Packages
@@ -193,8 +202,8 @@ jobs:
                       7.0.x
             - uses: actions/checkout@v4
               with:
-                  repository: ${{github.event.pull_request.head.repo.full_name}}
-                  ref: ${{ github.head_ref }}
+                  repository: ${{ github.event.action == 'closed' && github.event.pull_request.base.repo.full_name || github.event.pull_request.head.repo.full_name }}
+                  ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.head_ref }}
                   fetch-depth: 1
                   submodules: "recursive"
 
@@ -225,8 +234,8 @@ jobs:
         steps:
             - uses: actions/checkout@v4
               with:
-                  repository: ${{github.event.pull_request.head.repo.full_name}}
-                  ref: ${{ github.head_ref }}
+                  repository: ${{ github.event.action == 'closed' && github.event.pull_request.base.repo.full_name || github.event.pull_request.head.repo.full_name }}
+                  ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.head_ref }}
                   fetch-depth: 1
                   submodules: "recursive"
             - name: Install Splashkit & Compile Game
