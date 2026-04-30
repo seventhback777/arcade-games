@@ -287,7 +287,13 @@ jobs:
             - name: Install Splashkit & Compile Game
               uses: pguyot/arm-runner-action@v2
               with:
-                  cpu: cortex-a8
+                  # cortex-a53 (RPi 3) is the oldest target we still support;
+                  # binaries are forward-compatible with RPi 4 (a72) and RPi 5 (a76).
+                  # Crucially, a53 supports ARMv8 FP16 NEON intrinsics (vld1q_f16),
+                  # which the old cortex-a8 did not — that broke skm linux install's
+                  # llama.cpp build, leaving libSplashKit.so missing and every
+                  # C++ ARM link step failing with "cannot find -lSplashKit".
+                  cpu: cortex-a53
                   base_image: raspios_lite:latest
                   image_additional_mb: 4096
                   shell: bash
