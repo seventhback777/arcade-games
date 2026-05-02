@@ -1,3 +1,4 @@
+// CI test: trigger ARM build pipeline to verify llama.cpp patch
 #include "splashkit.h"
 #include "paddle.h"
 
