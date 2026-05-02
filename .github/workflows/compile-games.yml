@@ -294,7 +294,11 @@ jobs:
                   # llama.cpp build, leaving libSplashKit.so missing and every
                   # C++ ARM link step failing with "cannot find -lSplashKit".
                   cpu: cortex-a53
-                  base_image: raspios_lite:latest
+                  # arm64 image: llama.cpp's NEON code (vzip1q_s64, vzip1q_f32 etc.)
+                  # requires AArch64 intrinsics that clang only exposes in 64-bit mode.
+                  # 32-bit raspios_lite was failing with "undeclared function" errors.
+                  # All RPi 3/4/5 support 64-bit, so switching here doesn't lose users.
+                  base_image: raspios_lite_arm64:latest
                   image_additional_mb: 4096
                   shell: bash
                   import_github_env: true

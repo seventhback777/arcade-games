@@ -1,4 +1,4 @@
-// CI test: trigger ARM build pipeline to verify llama.cpp patch
+// CI test v3: switch to arm64 base image for AArch64 NEON intrinsics
 #include "splashkit.h"
 #include "paddle.h"
 
