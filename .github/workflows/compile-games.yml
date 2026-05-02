@@ -310,18 +310,22 @@ jobs:
                       # echo $PATH
                       # echo $DOTNET_ROOT
                       # dotnet --version
+                      WORKSPACE_ROOT=$(pwd)
                       bash <(curl -s https://raw.githubusercontent.com/splashkit/skm/master/install-scripts/skm-install.sh)
                       export PATH=$PATH:$HOME/.splashkit
                       sudo apt install --assume-yes libsdl2-dev libsdl2-gfx-dev libsdl2-mixer-dev libsdl2-ttf-dev libsdl2-net-dev libsdl2-image-dev libncurses-dev libpng-dev libcurl4-openssl-dev libbz2-dev libflac-dev libvorbis-dev libmikmod-dev libwebp-dev libfreetype6-dev
 
-                      # First pass: let skm clone llama.cpp; expected to fail at make
-                      # because GCC 14 (Raspbian Trixie) and llama.cpp's vendored
-                      # ggml-cpu-impl.h both define vcvtnq_s32_f32, causing a
-                      # redefinition error that aborts SplashKit's link step
-                      # (libSplashKit.so depends on llama/ggml static libs).
-                      echo "::group::skm linux install (first pass; expected to fail)"
-                      skm linux install || echo "First pass failed as expected; proceeding to patch"
-                      echo "::endgroup::"
+                      # NOTE: skm-install.sh above already invokes `skm linux install` internally,
+                      # which clones llama.cpp into ~/.splashkit/source/llama.cpp and runs cmake,
+                      # then fails at `make` due to a vcvtnq_s32_f32 redefinition between
+                      # clang 19's <arm_neon.h> on Raspbian Trixie and llama.cpp's vendored
+                      # ggml-cpu-impl.h. libSplashKit.so depends on llama/ggml static libs,
+                      # so this failure is fatal — that's why ARM releases were empty shells.
+                      #
+                      # We deliberately do NOT call `skm linux install` again here:
+                      # its first action is `git reset --hard FETCH_HEAD` on llama.cpp,
+                      # which would clobber any patch we apply. Instead we patch in place
+                      # and resume the build manually with `make && make install`.
 
                       echo "::group::Patch llama.cpp ggml-cpu-impl.h"
                       LLAMA_HEADER=$(find $HOME/.splashkit -path '*/ggml/src/ggml-cpu/ggml-cpu-impl.h' 2>/dev/null | head -n1)
@@ -330,11 +334,11 @@ jobs:
                         exit 1
                       fi
                       echo "Patching: $LLAMA_HEADER"
-                      # Disable llama.cpp's vendored vcvtnq_s32_f32 inline definition
-                      # so GCC 14's <arm_neon.h> intrinsic is used instead.
-                      # Brace counting via awk avoids dependency on line numbers.
+                      # Match the function definition line by its return type + name + paren.
+                      # Works for both `static inline int32x4_t ...` and `inline static int32x4_t ...`.
+                      # Will not match the comment-only line `// vcvtnq_s32_f32` (no parenthesis).
                       awk '
-                        /^static inline int32x4_t vcvtnq_s32_f32/ && !in_block {
+                        /int32x4_t[ \t]+vcvtnq_s32_f32[ \t]*\(/ && !in_block {
                           in_block=1; brace=0
                         }
                         {
@@ -345,7 +349,7 @@ jobs:
                               if (c == "{") brace++
                               else if (c == "}") brace--
                             }
-                            print "// [PATCHED OUT for GCC 14 compat] " $0
+                            print "// [PATCHED OUT for clang19/GCC14 compat] " $0
                             if (brace == 0) in_block=0
                             next
                           }
@@ -360,13 +364,31 @@ jobs:
                       fi
                       echo "::endgroup::"
 
-                      echo "::group::skm linux install (second pass; should succeed)"
-                      skm linux install
+                      echo "::group::Resume SplashKit build manually (skip skm's git reset)"
+                      SKM_BIN_DIR="$HOME/.splashkit/source/bin"
+                      if [ ! -d "$SKM_BIN_DIR" ]; then
+                        echo "::error::SplashKit build dir not found at $SKM_BIN_DIR"
+                        exit 1
+                      fi
+                      cd "$SKM_BIN_DIR"
+                      if ! make; then
+                        echo "::error::make failed after patch; patch may be insufficient"
+                        exit 1
+                      fi
+                      if ! make install; then
+                        echo "::error::make install failed"
+                        exit 1
+                      fi
+                      GLOBAL_INSTALL="$HOME/.splashkit/global/install/skm_global_install.sh"
+                      if [ -f "$GLOBAL_INSTALL" ]; then
+                        bash "$GLOBAL_INSTALL"
+                      fi
+                      cd "$WORKSPACE_ROOT"
                       echo "::endgroup::"
 
                       # Sanity check: libSplashKit must exist after install
                       if ! find $HOME/.splashkit /usr/local -name 'libSplashKit*' 2>/dev/null | grep -q .; then
-                        echo "::error::libSplashKit not found after skm linux install; ARM toolchain still broken"
+                        echo "::error::libSplashKit not found after install; ARM toolchain still broken"
                         exit 1
                       fi
 
